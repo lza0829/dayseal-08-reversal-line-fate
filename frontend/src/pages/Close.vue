@@ -32,7 +32,10 @@ onMounted(load)
 <template>
   <h2>日结封账</h2>
   <div v-if="preview" class="panel">
-    <p>营业日 {{ preview.business_day }} · 笔数 {{ preview.line_count }} · 系统合计 {{ preview.system_total.toFixed(2) }}
+    <p>
+      营业日 {{ preview.business_day }} · 笔数 {{ preview.line_count }}
+      （含冲正 {{ preview.reversal_count || 0 }} 笔，负向额已计入净额）
+      · 系统合计 {{ preview.system_total.toFixed(2) }}
       <span class="tag" :class="preview.sealed ? 'ok' : 'warn'">{{ preview.sealed ? '已封' : '未封' }}</span>
     </p>
     <div class="row">
@@ -40,6 +43,21 @@ onMounted(load)
       <button class="btn" :disabled="preview.sealed" @click="seal">封账</button>
       <button class="btn ghost" @click="load">刷新</button>
     </div>
+    <table>
+      <thead><tr><th>单号</th><th>类型</th><th>引用原单</th><th>金额</th></tr></thead>
+      <tbody>
+        <tr v-for="r in preview.lines" :key="r.id">
+          <td>{{ r.line_no }}</td>
+          <td>
+            <span class="tag" :class="r.entry_type === 'reversal' ? 'warn' : 'ok'">
+              {{ r.entry_type === 'reversal' ? '冲正' : '普通' }}
+            </span>
+          </td>
+          <td>{{ r.reversal_of_line_no || '—' }}</td>
+          <td>{{ r.amount.toFixed(2) }}</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
   <p v-if="msg" class="msg">{{ msg }}</p>
   <p v-if="err" class="msg err">{{ err }}</p>

@@ -11,7 +11,11 @@ def dashboard() -> dict[str, Any]:
     conn = connect()
     try:
         day = settings_repo.get(conn, "business_day") or ""
-        total, count = line_repo.day_total(conn, day) if day else (0.0, 0)
+        # 与封账预览/落批共用同一合计口径（含冲正负向额）
+        summary = line_repo.day_summary(conn, day) if day else {
+            "system_total": 0.0, "line_count": 0, "reversal_count": 0,
+        }
+        total, count = summary["system_total"], summary["line_count"]
         sealed = close_repo.is_sealed(conn, day) if day else False
         return {
             "business_day": day,

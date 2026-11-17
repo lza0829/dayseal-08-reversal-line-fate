@@ -14,6 +14,16 @@ def create_line(body: dict = Body(...)):
     return svc.create_line(body)
 
 
+@router.post("/{line_id}/reverse")
+def reverse_line(line_id: int, body: dict = Body(default={})):
+    return svc.reverse_line(line_id, body)
+
+
+@router.get("/reversals/all")
+def list_reversals():
+    return svc.list_reversals()
+
+
 @router.patch("/{line_id}")
 def patch_line(line_id: int, body: dict = Body(...)):
     return svc.patch_line(line_id, body)

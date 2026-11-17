@@ -16,11 +16,13 @@ def preview(business_day: str | None = None) -> dict[str, Any]:
     conn = connect()
     try:
         day = business_day or settings_repo.get(conn, "business_day") or ""
-        total, count = line_repo.day_total(conn, day)
+        # 与封账落批、仪表盘共用同一合计口径（含冲正负向额）
+        summary = line_repo.day_summary(conn, day)
         return {
             "business_day": day,
-            "system_total": total,
-            "line_count": count,
+            "system_total": summary["system_total"],
+            "line_count": summary["line_count"],
+            "reversal_count": summary["reversal_count"],
             "sealed": close_repo.is_sealed(conn, day),
             "lines": line_repo.list_lines(conn, day),
         }
@@ -37,7 +39,10 @@ def seal(body: dict[str, Any]) -> dict[str, Any]:
         if close_repo.is_sealed(conn, day):
             raise HTTPException(409, f"营业日 {day} 已封账")
         declared = float(body["declared_cash"])
-        total, count = line_repo.day_total(conn, day)
+        # 合计口径与预览同源：同日对冲产生的负向额已含在净额内
+        summary = line_repo.day_summary(conn, day)
+        total = summary["system_total"]
+        count = summary["line_count"]
         variance = round(declared - total, 2)
         sealed_at = _now()
         batch_id = close_repo.create_batch(

@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS cash_lines (
   amount REAL NOT NULL,
   pay_method TEXT NOT NULL,
   note TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  entry_type TEXT NOT NULL DEFAULT 'normal',
+  reversal_of_line_no TEXT
 );
 CREATE TABLE IF NOT EXISTS close_batches (
   id INTEGER PRIMARY KEY,
@@ -53,15 +55,76 @@ CREATE TABLE IF NOT EXISTS reopen_requests (
   business_day TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'none'
 );
+CREATE TABLE IF NOT EXISTS reversals (
+  id INTEGER PRIMARY KEY,
+  reversal_line_id INTEGER NOT NULL,
+  reversal_line_no TEXT NOT NULL,
+  original_line_id INTEGER NOT NULL,
+  original_line_no TEXT NOT NULL,
+  policy TEXT NOT NULL,
+  original_business_day TEXT NOT NULL,
+  reversal_business_day TEXT NOT NULL,
+  amount REAL NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reversals_original
+  ON reversals(original_line_no);
 '''
+
+# 冲正命运全局互斥策略（只贯彻一种）：
+#   same_day    同日对冲：冲正落在原流水同一营业日，负向额进入该日合计
+#   current_day 冲正日另计：冲正落入发起时当前营业日，原日已封合计不变
+REVERSAL_POLICIES = ("same_day", "current_day")
+DEFAULT_REVERSAL_POLICY = "same_day"
+
+
+def _column_names(conn, table: str) -> set[str]:
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def migrate(conn) -> None:
+    """对已存在的旧库补列/补表，不改动任何既有流水。"""
+    cols = _column_names(conn, "cash_lines")
+    if "entry_type" not in cols:
+        conn.execute("ALTER TABLE cash_lines ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'normal'")
+    if "reversal_of_line_no" not in cols:
+        conn.execute("ALTER TABLE cash_lines ADD COLUMN reversal_of_line_no")
+    conn.execute(
+        '''CREATE TABLE IF NOT EXISTS reversals (
+             id INTEGER PRIMARY KEY,
+             reversal_line_id INTEGER NOT NULL,
+             reversal_line_no TEXT NOT NULL,
+             original_line_id INTEGER NOT NULL,
+             original_line_no TEXT NOT NULL,
+             policy TEXT NOT NULL,
+             original_business_day TEXT NOT NULL,
+             reversal_business_day TEXT NOT NULL,
+             amount REAL NOT NULL,
+             created_at TEXT NOT NULL
+           )'''
+    )
+    # 数据库级兜底：一条原流水至多一条冲正，防重复冲正
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_reversals_original ON reversals(original_line_no)"
+    )
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key='reversal_policy'"
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES ('reversal_policy', ?)",
+            (DEFAULT_REVERSAL_POLICY,),
+        )
 
 
 def seed_if_empty() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        migrate(conn)
         n = conn.execute("SELECT COUNT(*) c FROM tills").fetchone()["c"]
         if n:
+            conn.commit()
             return
         conn.execute("INSERT INTO settings(key, value) VALUES ('business_day', ?)", ("2026-11-16",))
         tills = [
